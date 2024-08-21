@@ -64,3 +64,6 @@ numexpr
 huggingface_hub
 sqlalchemy
 
+sqlite3==0.9.6
+
+
