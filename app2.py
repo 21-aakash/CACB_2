@@ -1,127 +1,121 @@
-import os
-import pandas as pd
 import streamlit as st
+from pathlib import Path
+from langchain.agents import create_sql_agent
+from langchain.sql_database import SQLDatabase
+from langchain.agents.agent_types import AgentType
+from langchain.callbacks import StreamlitCallbackHandler
+from langchain.agents.agent_toolkits import SQLDatabaseToolkit
 from sqlalchemy import create_engine
+import sqlite3
+from langchain_groq import ChatGroq  # Import Groq LLM
 from dotenv import load_dotenv
-import groq  # Import the Groq library
+import os
 
 # Load environment variables from .env file
 load_dotenv()
 
-# Function to generate the schema from the DataFrame
-def generate_schema(df):
-    schema = ""
-    for col in df.columns:
-        dtype = str(df[col].dtype)
-        schema += f"{col} ({dtype}), "
-    return schema.rstrip(', ')
+# Automatically retrieve the Groq API key from the environment variables
+api_key = os.getenv("GROQ_API_KEY")
 
-# Function to construct the prompt
-def construct_prompt(natural_language_query, schema):
-    prompt = f"""
-You are an AI assistant that converts natural language to SQL queries.
+st.set_page_config(page_title="SkyChat", page_icon="👽")
+st.title("👽SkyChat: Chat with Database")
 
-Here is the database schema:
-Table: data
-Columns:
-{schema}
-
-Generate a SQL query for the following request:
-"{natural_language_query}"
-
-Only provide the SQL query.
-    """
-    return prompt
-
-# Function to generate SQL query using Groq
-def generate_sql_query(natural_language_query, schema):
-    prompt = construct_prompt(natural_language_query, schema)
-    response = groq.ChatCompletion.create(
-        model="Llama3-70b-8192",  # Specify the correct Groq model name
-        messages=[
-            {"role": "system", "content": "You are an AI assistant."},
-            {"role": "user", "content": prompt}
-        ],
-        max_tokens=150,
-        temperature=0,
-    )
-    sql_query = response['choices'][0]['message']['content'].strip()
-    return sql_query
-
-# Function to execute the SQL query
-def execute_sql_query(df, sql_query):
-    try:
-        engine = create_engine('sqlite://', echo=False)
-        df.to_sql('data', con=engine, index=False, if_exists='replace')
-        result_df = pd.read_sql_query(sql_query, con=engine)
-        return result_df
-    except Exception as e:
-        return f"Error executing SQL query: {e}"
-
-# Streamlit main function
-def main():
-    st.markdown("""
-        <style>
-        .stApp { background: #1e1e1e; color: #e0e0e0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-        .stTitle { font-size: 2.5em; font-weight: 600; color: #f0f0f0; text-align: center; padding-bottom: 20px; }
-        .stTextInput, .stTextArea { border-radius: 8px; border: 1px solid #444; padding: 12px; background-color: #333; color: #e0e0e0; box-shadow: 0 4px 8px rgba(0,0,0,0.5); }
-        .stTextInput:focus, .stTextArea:focus { border-color: #007bff; box-shadow: 0 0 0 0.2rem rgba(38, 143, 255, 0.25); }
-        .stButton { background-color: #007bff; color: #fff; border: none; border-radius: 8px; padding: 12px 24px; cursor: pointer; box-shadow: 0 4px 8px rgba(0,0,0,0.5); }
-        .stButton:hover { background-color: #0056b3; }
-        .stButton:active { background-color: #004080; }
-        .stSidebar { background: #2c2c2c; color: #e0e0e0; border-right: 1px solid #444; }
-        .stSidebar .stTextInput, .stSidebar .stTextArea { background-color: #333; color: #e0e0e0; border: 1px solid #444; }
-        .stWarning, .stError { color: #dc3545; }
-        .stSuccess { color: #28a745; }
-        </style>
+# Custom CSS for font colors and styles
+st.markdown("""
+    <style>
+    .stTextInput, .stTextArea, .stChatMessage, .stButton, .stSelectbox, .stRadio, .stSidebar > div {
+        color: #ffffff;
+    }
+    .stMarkdown p {
+        color: #ffffff;
+    }
+    .stTitle h1 {
+        color: #ffa500;  /* Orange color for title */
+    }
+    .stSidebar h1, .stSidebar h2, .stSidebar h3 {
+        color: #00ff00;  /* Green color for sidebar headings */
+    }
+    .stSidebar .stTextInput, .stSidebar .stTextArea, .stSidebar .stButton, .stSidebar .stSelectbox, .stSidebar .stRadio {
+        color: #00ff00;  /* Green color for sidebar inputs */
+    }
+    body {
+        background-color: #000000;  /* Black background */
+    }
+    </style>
     """, unsafe_allow_html=True)
 
-    st.title("CSV Data Query Chatbot")
+LOCALDB = "USE_LOCALDB"
+MYSQL = "USE_MYSQL"
 
-    # Sidebar for API key input
-    st.sidebar.header("API Key")
-    groq_api_key = st.sidebar.text_input("Enter your Groq API key:", type="password", placeholder="Your Groq API Key")
+radio_opt = ["Use SQLite 3 Database - Student.db", "Connect to your MySQL Database"]
 
-    # File uploader
-    uploaded_file = st.file_uploader("Upload your CSV file", type=["csv"])
+selected_opt = st.sidebar.radio(label="Choose the DB which you want to chat with", options=radio_opt)
 
-    if uploaded_file:
-        df = pd.read_csv(uploaded_file)
+if radio_opt.index(selected_opt) == 1:
+    db_uri = MYSQL
+    mysql_host = st.sidebar.text_input("Provide MySQL Host")
+    mysql_user = st.sidebar.text_input("MySQL User")
+    mysql_password = st.sidebar.text_input("MySQL Password", type="password")
+    mysql_db = st.sidebar.text_input("MySQL Database")
+else:
+    db_uri = LOCALDB
 
-        df.columns = [
-            "Page title and screen name", "Country", "Views", 
-            "Users", "Views per user", "Average engagement time", 
-            "Event count", "Key events"
-        ]
-        
-        st.write(f"Data Loaded:")
-        st.dataframe(df.head())
+# Inform the user if the API key is missing
+if not api_key:
+    st.error("Groq API key is missing. Please ensure it's set in the .env file.")
+    st.stop()
 
-        st.write("Enter Your Query:")
-        user_query = st.text_area("Type your query here:", "What are the total views for the USA?")
+# LLM model
+llm = ChatGroq(groq_api_key=api_key, model_name="Llama3-8b-8192", streaming=True)
 
-        if groq_api_key:
-            # Set the API key for Groq
-            os.environ["GROQ_API_KEY"] = groq_api_key
+@st.cache_resource(ttl="2h")
+def configure_db(db_uri, mysql_host=None, mysql_user=None, mysql_password=None, mysql_db=None):
+    if db_uri == LOCALDB:
+        dbfilepath = (Path(__file__).parent / "student.db").absolute()
+        print(dbfilepath)
+        creator = lambda: sqlite3.connect(f"file:{dbfilepath}?mode=ro", uri=True)
+        return SQLDatabase(create_engine("sqlite:///", creator=creator))
+    elif db_uri == MYSQL:
+        if not (mysql_host and mysql_user and mysql_password and mysql_db):
+            st.error("Please provide all MySQL connection details.")
+            st.stop()
+        return SQLDatabase(create_engine(f"mysql+mysqlconnector://{mysql_user}:{mysql_password}@{mysql_host}/{mysql_db}"))
 
-            if st.button("Submit Query"):
-                with st.spinner('Generating SQL query...'):
-                    schema = generate_schema(df)
-                    sql_query = generate_sql_query(user_query, schema)
-                    st.write(f"Generated SQL Query:\nsql\n{sql_query}\n")
+if db_uri == MYSQL:
+    db = configure_db(db_uri, mysql_host, mysql_user, mysql_password, mysql_db)
+else:
+    db = configure_db(db_uri)
 
-                with st.spinner('Executing SQL query...'):
-                    result = execute_sql_query(df, sql_query)
+# Toolkit
+toolkit = SQLDatabaseToolkit(db=db, llm=llm)
 
-                    if isinstance(result, pd.DataFrame) and not result.empty:
-                        st.write("Query Results:")
-                        st.dataframe(result)
-                    elif isinstance(result, pd.DataFrame) and result.empty:
-                        st.warning("The query executed successfully but returned no results.")
-                    else:
-                        st.error(result)
-        else:
-            st.warning("Please enter your Groq API key to proceed.")
+agent = create_sql_agent(
+    llm=llm,
+    toolkit=toolkit,
+    verbose=True,
+    agent_type=AgentType.ZERO_SHOT_REACT_DESCRIPTION
+)
 
-if __name__ == "__main__":
-    main()
+# Initialize or clear message history
+if "messages" not in st.session_state or st.sidebar.button("Clear message history"):
+    st.session_state["messages"] = [{"role": "assistant", "content": "How can I help you?"}]
+
+# Display chat messages using st.chat_message with custom colors
+for msg in st.session_state["messages"]:
+    if msg["role"] == "user":
+        st.chat_message("user").write(msg["content"], unsafe_allow_html=True)
+    else:
+        st.chat_message("assistant").write(msg["content"], unsafe_allow_html=True)
+
+# Handle user input
+user_query = st.chat_input(placeholder="Ask anything from the database")
+
+if user_query:
+    st.session_state["messages"].append({"role": "user", "content": user_query})
+    st.chat_message("user").write(user_query, unsafe_allow_html=True)
+
+    with st.chat_message("assistant"):
+        streamlit_callback = StreamlitCallbackHandler(st.container())
+        response = agent.run(user_query, callbacks=[streamlit_callback])
+        st.session_state["messages"].append({"role": "assistant", "content": response})
+        st.write(response, unsafe_allow_html=True)
