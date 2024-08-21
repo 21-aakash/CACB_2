@@ -1,6 +1,6 @@
 langchain
 ipykernel
-openai==0.28
+openai
 fastapi
 langchain_groq
 langchain_core
