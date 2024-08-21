@@ -37,7 +37,7 @@ Only provide the SQL query.
 def generate_sql_query(natural_language_query, schema):
     prompt = construct_prompt(natural_language_query, schema)
     response = groq.ChatCompletion.create(
-        model="Gemma2-9b-It",  # Specify the correct Groq model name
+        model="Llama3-70b-8192",  # Specify the correct Groq model name
         messages=[
             {"role": "system", "content": "You are an AI assistant."},
             {"role": "user", "content": prompt}
