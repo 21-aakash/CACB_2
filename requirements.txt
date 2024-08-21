@@ -48,7 +48,7 @@ faiss-cpu
 langchain_chroma
 duckdb
 pandas
-
+groq 
 langchain-groq
 duckduckgo_search==5.3.1b1
 pymupdf
